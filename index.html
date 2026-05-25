@@ -520,16 +520,28 @@ const AUDIO_BASE = './individualsound/';
 
 // ===================== STATE =====================
 let selectedGroups = [];
-let activeSounds = [];       // 当前已选组的所有音素
-let allSounds = [];          // 全部组的所有音素（用于凑数干扰项）
+let activeSounds = [];
+let allSounds = [];
 let currentQ = null;
 let score = 0;
 let audioCtx = null;
 let lastAudioFile = null;
 
 // ===================== AUDIO =====================
+// -------------------------------------------------------
+// FIX: 手机浏览器（iOS / Android）要求 AudioContext 必须
+//      在用户手势之后才能运行。创建后若处于 "suspended"
+//      状态，需要主动调用 resume() 唤醒它，否则合成音
+//      完全无声。
+// -------------------------------------------------------
 function getAudioCtx() {
-  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  // 关键修复：如果被手机浏览器暂停，立即恢复
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
   return audioCtx;
 }
 
@@ -624,7 +636,6 @@ function toggleGroup(id) {
 }
 
 // ===================== HELPERS =====================
-
 function resolveFile(sound) {
   if (sound.files) {
     return sound.files[Math.floor(Math.random() * sound.files.length)];
@@ -639,7 +650,6 @@ function getCorrectLabels(file) {
   }).map(s => s.label))];
 }
 
-// 全局扫描：所有组里只要能发出这个音的 label 统统找出来，作为黑名单
 function getGlobalSoundMatchLabels(file) {
   return [...new Set(allSounds.filter(s => {
     if (s.files) return s.files.includes(file);
@@ -653,18 +663,11 @@ function pickOptions(sound, resolvedFile) {
   const shuffledCorrect = correctLabels.slice().sort(() => Math.random() - 0.5);
   const numCorrect = Math.max(1, Math.floor(Math.random() * shuffledCorrect.length) + 1);
   let chosenCorrect = shuffledCorrect.slice(0, numCorrect);
-
   if (chosenCorrect.length === 0) chosenCorrect = [correctLabels[0]];
 
-  const chosenCorrectSet = new Set(chosenCorrect);
   const allCorrectSet = new Set(correctLabels);
-  
-  // 生成全局同音黑名单
   const globalSoundMatchSet = new Set(getGlobalSoundMatchLabels(resolvedFile));
-
   const neededDistractors = 6 - chosenCorrect.length;
-
-  // 严格过滤：不是本题答案，且发音不能和本题相同（包含全局别组）
   const isValidDistractor = (l) => !allCorrectSet.has(l) && !globalSoundMatchSet.has(l);
 
   const activeLabels = [...new Set(activeSounds.map(s => s.label))];
@@ -699,7 +702,7 @@ function startGame() {
       g.sounds.forEach(s => activeSounds.push({ ...s, groupId: g.id }));
     }
   });
-  
+
   allSounds = [];
   GROUPS.forEach(g => {
     g.sounds.forEach(s => allSounds.push({ ...s, groupId: g.id }));
@@ -719,20 +722,14 @@ function updateScoreUI() {
 }
 
 function nextQuestion() {
-  // 严格防相邻重复音频
   let available = activeSounds.filter(s => {
-    // 只要该音素包含上一题播放的那个具体音频，就不准出现在下一题里
     if (s.files) return !s.files.includes(lastAudioFile);
     return s.file !== lastAudioFile;
   });
-  
-  // 保底：如果只选了一个音（被完全过滤空了），才允许复用
   if (available.length === 0) available = activeSounds;
 
   const sound = available[Math.floor(Math.random() * available.length)];
   const resolvedFile = resolveFile(sound);
-  
-  // 记录本次确定要播放的声音
   lastAudioFile = resolvedFile;
 
   const { options, targetAnswers } = pickOptions(sound, resolvedFile);
